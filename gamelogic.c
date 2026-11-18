@@ -2,7 +2,7 @@
 
 Game logic module for the human player.
 
-sudo docker run --rm -v $(pwd):/src -u $(id -u):$(id -g) --mount type=bind,source=$(pwd),target=/home/src c-wasm emcc -Os -s STANDALONE_WASM -s INITIAL_HEAP=1048576 -s EXPORTED_FUNCTIONS="['_getCurrentState','_getMovesBuffer','_sideToMove_client','_isWhite_client','_isBlack_client','_isEmpty_client','_isPawn_client','_isKnight_client','_isBishop_client','_isRook_client','_isQueen_client','_isKing_client','_getMovesIndex_client','_makeMove_client','_isTerminal_client','_isWin_client','_countLimit_client','_repetitionBarrier_client','_draw']" -Wl,--no-entry "gamelogic.c" -o "gamelogic.wasm"
+sudo docker run --rm -v $(pwd):/src -u $(id -u):$(id -g) --mount type=bind,source=$(pwd),target=/home/src c-wasm emcc -Os -s STANDALONE_WASM -s INITIAL_HEAP=1048576 -s EXPORTED_FUNCTIONS="['_getCurrentState','_getMovesBuffer','_sideToMove_client','_isWhite_client','_isBlack_client','_isEmpty_client','_isPawn_client','_isKnight_client','_isBishop_client','_isRook_client','_isQueen_client','_isKing_client','_getMovesIndex_client','_makeMove_client','_isTerminal_client','_isWin_client','_repetitionBarrier_client','_draw']" -Wl,--no-entry "gamelogic.c" -o "gamelogic.wasm"
 
 */
 
@@ -16,7 +16,7 @@ sudo docker run --rm -v $(pwd):/src -u $(id -u):$(id -g) --mount type=bind,sourc
  Prototypes  */
 
 __attribute__((import_module("env"), import_name("_printRow"))) void printRow(char a, char b, char c, char d, char e, char f, char g, char h);
-__attribute__((import_module("env"), import_name("_printGameStateData"))) void printGameStateData(bool wToMove, unsigned char moveCtr, unsigned char moveLimit);
+__attribute__((import_module("env"), import_name("_printGameStateData"))) void printGameStateData(bool wToMove, unsigned char moveCtr);
 
 unsigned char* getCurrentState(void);
 unsigned char* getMovesBuffer(void);
@@ -38,7 +38,6 @@ unsigned int getMovesIndex_client(unsigned char);
 void makeMove_client(unsigned char, unsigned char);
 bool isTerminal_client(void);
 unsigned char isWin_client(void);
-unsigned char countLimit_client(void);
 unsigned char repetitionBarrier_client(void);
 
 void draw(void);
@@ -67,17 +66,18 @@ unsigned char* getMovesBuffer(void)
 
 /* Game State Encoding & Decoding
 
-   Byte [     0] = Side to move and move counter: [7][6][5][4][3][2][1][0]
-                                                   ^  ^  ^  ^  ^  ^  ^  ^
-                                                   |  |  |  |  |  |  |  +--- Bit 1  of the move counter.
-                                                   |  |  |  |  |  |  +------ Bit 2  of the move counter.
-                                                   |  |  |  |  |  +--------- Bit 4  of the move counter.
-                                                   |  |  |  |  +------------ Bit 8  of the move counter.
-                                                   |  |  |  +--------------- Bit 16 of the move counter.
-                                                   |  |  +------------------ Bit 32 of the move counter.
-                                                   |  +--------------------- Bit 64 of the move counter.
-                                                   +------------------------ ON: white to move; OFF: black to move.
-   Bytes[ 1, 64] = Board encoding                  */
+   Byte [     0] = Side to move:  [7][6][5][4][3][2][1][0]
+                                   ^  ^  ^  ^  ^  ^  ^  ^
+                                   |  |  |  |  |  |  |  +--- reserved
+                                   |  |  |  |  |  |  +------ reserved
+                                   |  |  |  |  |  +--------- reserved
+                                   |  |  |  |  +------------ reserved
+                                   |  |  |  +--------------- reserved
+                                   |  |  +------------------ reserved
+                                   |  +--------------------- reserved
+                                   +------------------------ ON: white to move; OFF: black to move.
+   Byte [     1] = Move counter.
+   Bytes[ 2, 65] = Board encoding. */
 
 /* Pack a GameState into the unsigned-char buffer "currentState". */
 void serialize(GameState* gs)
@@ -85,10 +85,11 @@ void serialize(GameState* gs)
     unsigned char i = 0, j;
     unsigned char ch;
 
-    //////////////////////////////////////////////////////////////////  (1 byte) Encode side to move and move counter.
-    ch = gs->moveCtr;                                               //  Write the move counter.
+    //////////////////////////////////////////////////////////////////  (1 byte) Encode side to move.
     if(gs->whiteToMove)                                             //  Set bit: white to move.
-      ch |= 128;
+      ch = 128;
+    else
+      ch = 0;
 
     currentState[i++] = ch;                                         //  Write byte.
 
@@ -130,23 +131,26 @@ void serialize(GameState* gs)
         currentState[i++] = ch;                                     //  Write byte.
       }
 
-    return;                                                         //  TOTAL: 65 bytes.
+    //////////////////////////////////////////////////////////////////  (1 byte) Encode the move counter.
+    ch = gs->moveCtr;                                               //  Write the move counter.
+
+    currentState[i++] = ch;                                         //  Write byte.
+
+    return;                                                         //  TOTAL: 66 bytes.
   }
 
 /* Recover a GameState from the unsigned-char buffer "currentState". */
 void deserialize(GameState* gs)
   {
-    unsigned char i, j;
+    unsigned char i = 0, j;
 
-    for(i = 0; i < _NONE; i++)                                      //  Fill-in/blank-out.
-      gs->board[i] = _EMPTY;
+    for(j = 0; j < _NONE; j++)                                      //  Fill-in/blank-out.
+      gs->board[j] = _EMPTY;
 
-    //////////////////////////////////////////////////////////////////  (1 byte) Decode side to move and move counter.
-    gs->whiteToMove = ((currentState[0] & 128) == 128);             //  Recover side to move.
-    gs->moveCtr = (currentState[0] & 127);
+    //////////////////////////////////////////////////////////////////  (1 byte) Decode side to move.
+    gs->whiteToMove = ((currentState[i++] & 128) == 128);           //  Recover side to move.
 
     //////////////////////////////////////////////////////////////////  (64 bytes) Decode the board.
-    i = 1;
     for(j = 0; j < _NONE; j++)
       {
         if(currentState[i] == _WHITE_PAWN)
@@ -177,7 +181,10 @@ void deserialize(GameState* gs)
         i++;
       }
 
-    return;                                                         //  TOTAL: 65 bytes.
+    //////////////////////////////////////////////////////////////////  (1 byte) Recover the move counter.
+    gs->moveCtr = currentState[i++];
+
+    return;                                                         //  TOTAL: 66 bytes.
   }
 
 /* Answer the client-side question, Whose turn is it? */
@@ -269,13 +276,6 @@ unsigned char isWin_client(void)
     return isWin(&gs);
   }
 
-unsigned char countLimit_client(void)
-  {
-    GameState gs;
-    deserialize(&gs);                                               //  Recover GameState from buffer.
-    return countLimit(&gs);
-  }
-
 /* Given an index, recover the game state from the global buffer "currentState", and compute the moves available to the piece at "index."
    The number of moves is returned, and that many bytes in "movesBuffer" will contain a destinations.
    This function is intended to answer queries from the human player. */
@@ -352,16 +352,13 @@ unsigned char repetitionBarrier_client(void)
 void draw(void)
   {
     GameState gs;
-    unsigned char lim;
     signed char y;
 
     deserialize(&gs);                                               //  Recover GameState from buffer.
 
-    lim = countLimit(&gs);
-
     for(y = 7; y >= 0; y--)
       printRow(gs.board[y * 8], gs.board[y * 8 + 1], gs.board[y * 8 + 2], gs.board[y * 8 + 3], gs.board[y * 8 + 4], gs.board[y * 8 + 5], gs.board[y * 8 + 6], gs.board[y * 8 + 7]);
 
-    printGameStateData(gs.whiteToMove, gs.moveCtr, lim);
+    printGameStateData(gs.whiteToMove, gs.moveCtr);
     return;
   }

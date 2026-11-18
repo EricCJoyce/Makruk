@@ -33,18 +33,26 @@
 #define GAME_OVER_BLACK_WINS          2
 #define GAME_OVER_STALEMATE           3
 
-#define _GAMESTATE_BYTE_SIZE         65                             /* Number of bytes needed to store a GameState structure. */
+#define _GAMESTATE_BYTE_SIZE         66                             /* Number of bytes needed to store a GameState structure. */
 #define _MOVE_BYTE_SIZE               2                             /* Number of bytes needed to store a Move structure. */
 #define _MAX_NUM_TARGETS             32                             /* A (generous) upper bound on how many distinct destinations (not distinct moves)
                                                                        may be available to a player from a single index. */
 #define _MAX_MOVES                  256                             /* A (generous) upper bound on how many moves are available to a team in a single turn. */
 
-#define _REPETITION_STATE_BYTE_SIZE  64                             /* Bytes needed for repetition-detection encoding. */
+#define _REPETITION_STATE_BYTE_SIZE  65                             /* Bytes needed for repetition-detection encoding. */
 #define _MAX_STATE_REPETITION         3                             /* Sources disagree on Makruk's draw-by-repetition rules, but this implementation is
                                                                        going to enforce the policy that the 3rd occurrence of a game state forces a draw. */
 
 /**************************************************************************************************
  Typedefs  */
+
+typedef enum
+  {
+    COUNT_NONE,
+    COUNT_BOARD,
+    COUNT_WHITE_MATES,
+    COUNT_BLACK_MATES
+  } CountPhase;
 
 typedef struct GameStateType                                        //  TOTAL: 65 bytes.
   {
@@ -85,7 +93,9 @@ unsigned int getQueenMoves(unsigned char, GameState*, Move*);
 unsigned int getKingMoves(unsigned char, GameState*, Move*);
 
 unsigned char isWin(GameState*);
+CountPhase countPhase(GameState*);
 unsigned char countLimit(GameState*);
+bool countedTurn(CountPhase, bool);
 bool insufficientMaterial(GameState*);
 bool terminal(GameState*);
 
@@ -146,10 +156,11 @@ void copyGameState(GameState* src, GameState* dst)
 
 void makeMove(Move* move, GameState* gs)
   {
-    unsigned char prevLimit, newLimit;
+    CountPhase before, after;
+    bool advance;
 
-    prevLimit = countLimit(gs);                                     //  What was the limit BEFORE this move?
-
+    before = countPhase(gs);
+    advance = countedTurn(before, gs->whiteToMove);
                                                                     //  Pawn promotion
     if(isPawn(move->from, gs) && (row(move->to) == 5 || row(move->to) == 2))
       {
@@ -165,11 +176,14 @@ void makeMove(Move* move, GameState* gs)
         gs->board[move->from] = _EMPTY;
       }
 
-    newLimit = countLimit(gs);                                      //  Check again, after the move.
-    if(prevLimit != newLimit)                                       //  Does a new limit apply?
-      gs->moveCtr = 0;                                              //  Reset for new conditions.
-    else if(newLimit > 0)                                           //  Don't increment if we are not counting.
-      gs->moveCtr++;                                                //  Increment under standing conditions.
+    after = countPhase(gs);
+
+    if(after == COUNT_NONE)
+      gs->moveCtr = 0;
+    else if(after != before)
+      gs->moveCtr = (after == COUNT_BOARD) ? 128 : countLimit(gs);
+    else if(advance && gs->moveCtr > 0)
+      gs->moveCtr--;
 
     gs->whiteToMove = !gs->whiteToMove;                             //  Flip flag.
 
@@ -345,7 +359,6 @@ unsigned int getMovesIndex(unsigned char index, GameState* gs, Move* buffer)
 unsigned int getPawnMoves(unsigned char index, GameState* gs, Move* buffer)
   {
     unsigned int movesCtr = 0;
-    unsigned int i, len = 0;
 
     if(isWhite(index, gs))
       {
@@ -758,7 +771,6 @@ unsigned char isWin(GameState* gs)
     Move moves[_MAX_MOVES];                                         //  Generous upper-bound assumption.
     unsigned int len;
     unsigned char kpos = 0;
-    unsigned char limit;
 
     len = getMoves(gs, moves);                                      //  Get moves for side to move
 
@@ -791,12 +803,47 @@ unsigned char isWin(GameState* gs)
     else if(insufficientMaterial(gs))                               //  Game is over if there is insufficient material to mate.
       return GAME_OVER_STALEMATE;
 
-    limit = countLimit(gs);                                         //  What is the current limit?
-
-    if(limit > 0 && gs->moveCtr >= limit)                           //  A limit applies, and we have reached it.
+    if(countPhase(gs) != COUNT_NONE && gs->moveCtr == 0)            //  A limit applies, and we have reached it.
       return GAME_OVER_STALEMATE;
 
     return GAME_ONGOING;
+  }
+
+CountPhase countPhase(GameState* gs)
+  {
+    bool wMaterial = false;
+    bool bMaterial = false;
+    unsigned char i;
+
+    for(i = 0; i < _NONE; i++)
+      {
+        switch(gs->board[i])
+          {
+            case _WHITE_PAWN:
+            case _BLACK_PAWN:    return COUNT_NONE;
+
+            case _WHITE_KNIGHT:
+            case _WHITE_BISHOP:
+            case _WHITE_ROOK:
+            case _WHITE_QUEEN:   wMaterial = true;  break;
+
+            case _BLACK_KNIGHT:
+            case _BLACK_BISHOP:
+            case _BLACK_ROOK:
+            case _BLACK_QUEEN:   bMaterial = true;  break;
+          }
+      }
+
+    if(wMaterial && bMaterial)
+      return COUNT_BOARD;
+
+    if(wMaterial)
+      return COUNT_WHITE_MATES;
+
+    if(bMaterial)
+      return COUNT_BLACK_MATES;
+
+    return COUNT_NONE;
   }
 
 /* When neither side has any PAWNS, the game must be completed within a certain number of moves or it is declared a draw.
@@ -900,9 +947,22 @@ unsigned char countLimit(GameState* gs)
               return 64;
             return 64;
           }
+        else if(wMaterialCtr > 0 && bMaterialCtr > 0)               //  No pawns, but no advantage.
+          return 64;
       }
 
-    return 0;
+    return 0;                                                       //  Pawns remain, and there is no counting.
+  }
+
+bool countedTurn(CountPhase phase, bool whiteToMove)
+  {
+    switch(phase)
+      {
+        case COUNT_BOARD:        return true;
+        case COUNT_WHITE_MATES:  return  whiteToMove;
+        case COUNT_BLACK_MATES:  return !whiteToMove;
+        default:                 return false;
+      }
   }
 
 /* Check for King versus King. */
