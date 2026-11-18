@@ -17,3 +17,16 @@ Kill the container.
 sudo docker image rm c-wasm
 ```
 
+## Citation
+If this code was helpful to you, please cite this repository.
+
+```
+@misc{boku,
+  title={Makruk in C},
+  author={Eric C. Joyce},
+  year={2026},
+  publisher={Github},
+  journal={GitHub repository},
+  howpublished={\url{https://github.com/EricCJoyce/Makruk}}
+}
+```
